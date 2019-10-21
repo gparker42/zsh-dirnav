@@ -1,0 +1,144 @@
+# dirnav - directory navigation for zsh
+# Greg Parker  gparker-github@sealiesoftware.com
+#
+# Functions available for keybindings:
+#   _dirnav_parent: Change the current directory to the parent directory.
+#   _dirnav_child: Change the current directory to the child
+#       directory that was previously vacated by _dirnav_parent.
+#
+# Example zshrc:
+#   # load
+#   fpath=( /parent/of/dirnav/ "${fpath[@]}" )
+#   autoload -Uz dirnav
+#   dirnav
+#
+#   # keybindings
+#   bindkey "^[[1;5D" _dirnav_parent     # ctrl-left
+#   bindkey "^[[5D"   _dirnav_parent     # ctrl-left
+#   bindkey "^[[1;5C" _dirnav_child      # ctrl-right
+#   bindkey "^[[5C"   _dirnav_child      # ctrl-right
+
+
+autoload -Uz add-zsh-hook
+
+# Keybinding: navigate to cwd's parent directory
+function _dirnav_parent() {
+    # Don't allow auto_pushd to record these intermediate directory changes.
+    # We'll save the final position during preexec if necessary.
+    setopt local_options
+    unsetopt auto_pushd
+
+    if [[ $PWD = '/' ]]; then
+        [[ -o histbeep ]] && zle beep
+        return 0
+    fi
+
+    if [[ -z $_dirnav_deepest ]]; then
+        # _no _dirnav_deepest yet - save pwd
+        _dirnav_deepest=$PWD
+    else
+        case $_dirnav_deepest in
+            $PWD/*|$PWD ) ;;            # pwd is some parent of _dirnav_deepest
+            * ) _dirnav_deepest=$PWD;;  # save new _dirnav_deepest
+        esac
+    fi
+
+    cd ..
+    zle reset-prompt
+    return 0
+}
+
+
+# Keybinding: navigate to the previously-used child directory
+function _dirnav_child() {
+    # Don't allow auto_pushd to record these intermediate directory changes.
+    # We'll save the final position during preexec if necessary.
+    setopt local_options
+    unsetopt auto_pushd
+
+    if [[ -z $_dirnav_deepest ]]; then
+        # _no _dirnav_deepest yet - can't navigate to the child
+        _dirnav_deepest=$PWD
+        [[ -o histbeep ]] && zle beep
+    elif [[ $_dirnav_deepest = $PWD ]]; then
+        # pwd is already equal to _dirnav_deepest- can't navigate to the child
+        [[ -o histbeep ]] && zle beep
+    else
+        # Remove trailing components from _dirnav_deepest until we reach pwd
+        # then keep the penultimate value.
+        local dir
+        local prevdir
+        dir=$_dirnav_deepest
+        while true; do
+            if [[ $dir = $PWD ]]; then
+                # success
+                cd -- $prevdir
+                zle reset-prompt
+                break
+            elif [[ -z $dir || $dir = '/' ]]; then
+                # failure?
+                [[ -o histbeep ]] && zle beep
+                break
+            else
+                # chop
+                prevdir=$dir
+                dir=${dir:h}
+            fi
+        done
+    fi
+    return 0
+}
+
+
+# Perform auto_pushd on behalf of dirnav parent and child motion
+# (because auto_pushd was suppressed during them).
+# We save the final destination to the dirstack during preexec instead.
+# A precmd is used to record the PWD before dirnav does anything.
+function _dirnav_preexec() {
+    # Do nothing if we're in the same place we were before
+    # or if we don't have a save from precmd.
+    if [[ -z $_dirnav_saved_cwd || $_dirnav_saved_cwd = $PWD ]]; then
+        return 0
+    fi
+
+    # Do nothing if auto_pushd is disabled.
+    if [[ ! -o auto_pushd ]]; then
+        _dirnav_saved_cwd=
+        return 0
+    fi
+
+    setopt local_options
+    unsetopt auto_pushd
+
+    # PWD has changed and auto_pushd is set.
+    # Record the previous CWD to the directory stack.
+    # We use -q because we're "already" in $newpwd.
+    local newpwd=$PWD
+    cd -q -- $_dirnav_saved_cwd
+    pushd -q -- $newpwd
+
+    # Clear saved cwd. We record a new one during the next precmd.
+    _dirnav_saved_cwd=
+    return 0
+}
+
+function _dirnav_precmd() {
+    # Set _dirnav_saved_cwd if it is not set already
+    # There may be multiple precmds for a single preexec due to zle reset-prompt
+    if [[ -z $_dirnav_saved_cwd ]]; then
+        _dirnav_saved_cwd=$PWD
+    fi
+    return 0
+}
+
+# Install hooks
+add-zsh-hook precmd _dirnav_precmd
+add-zsh-hook preexec _dirnav_preexec
+
+# Register the keybindable functions
+zle -N _dirnav_parent
+zle -N _dirnav_child
+
+# clean up
+unfunction dirnav
+return 0

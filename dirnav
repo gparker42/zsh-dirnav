@@ -140,5 +140,9 @@ zle -N _dirnav_parent
 zle -N _dirnav_child
 
 # clean up
-unfunction dirnav
+# Check if function dirnav exists before calling it.
+# Some module systems don't create it in the first place.
+if [ ${+functions[dirnav]} -eq 1 ]; then
+    unfunction dirnav;
+fi
 return 0
